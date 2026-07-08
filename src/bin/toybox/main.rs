@@ -14,15 +14,20 @@ use uuid::Uuid;
 
 use crate::download::Download;
 use crate::download::run_download;
+use crate::fork::Fork;
+use crate::fork::run_fork;
 use crate::login::Login;
 use crate::login::run_login;
 use crate::logout::run_logout;
-use crate::upload::Upload;
+use crate::new::New;
+use crate::new::run_new;
 use crate::upload::run_upload;
 
 mod download;
+mod fork;
 mod login;
 mod logout;
+mod new;
 mod unpacked_repr;
 mod upload;
 
@@ -41,7 +46,9 @@ enum Commands {
     /// Download a game from ToyBox
     Download(Download),
     /// Upload a game to ToyBox
-    Upload(Upload),
+    Upload,
+    Fork(Fork),
+    New(New),
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -60,7 +67,10 @@ static CONFIG_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 fn serialize_config(config: &Config) -> Result<()> {
     let config_path = CONFIG_DIR.join("config.json");
 
-    Ok(fs::write(config_path, serde_json::to_string(config)?)?)
+    Ok(fs::write(
+        config_path,
+        serde_json::to_string_pretty(config)?,
+    )?)
 }
 fn deserialize_config() -> Result<Config> {
     let config_path = CONFIG_DIR.join("config.json");
@@ -89,6 +99,12 @@ async fn main() -> Result<()> {
                 token,
                 id: *user_id,
             });
+            if !client.is_logged_in().await? {
+                client.auth = None;
+                config.user_id = None;
+                config.username = None;
+                eprintln!("Session expired!");
+            }
         }
     }
 
@@ -96,7 +112,9 @@ async fn main() -> Result<()> {
         Commands::Login(login) => run_login(&mut config, &mut client, login).await?,
         Commands::Logout => run_logout(&mut config, &mut client).await?,
         Commands::Download(unpack) => run_download(&mut config, &mut client, unpack).await?,
-        Commands::Upload(upload) => run_upload(&mut config, &mut client, upload).await?,
+        Commands::Upload => run_upload(&mut config, &mut client).await?,
+        Commands::Fork(fork) => run_fork(&mut config, &mut client, fork).await?,
+        Commands::New(new) => run_new(&mut config, &mut client, new).await?,
     }
 
     serialize_config(&config)?;
