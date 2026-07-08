@@ -1,0 +1,79 @@
+# Written with AI because I hate CI
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary_name: toybox
+            artifact_name: toybox-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary_name: toybox
+            artifact_name: toybox-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary_name: toybox
+            artifact_name: toybox-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: toybox.exe
+            artifact_name: toybox-windows-x86_64.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ matrix.binary_name }} dist/${{ matrix.artifact_name }}
+
+      - name: Upload artifact staging
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.artifact_name }}
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true # Flattens all downloaded files into the dist/ directory
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
