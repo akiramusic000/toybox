@@ -47,7 +47,9 @@ enum Commands {
     Download(Download),
     /// Upload a game to ToyBox
     Upload,
+    /// Fork a game on ToyBox by reuploading it.
     Fork(Fork),
+    /// Create a new game without uploading it.
     New(New),
 }
 
