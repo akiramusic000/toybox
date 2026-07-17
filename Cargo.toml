@@ -2,6 +2,10 @@
 name = "toybox-rs"
 version = "0.1.0"
 edition = "2024"
+description = "A CLI tool and library for interacting with the API of Toybox."
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/akiramusic000/toybox"
 
 [dependencies]
 anyhow = "1.0.103"
