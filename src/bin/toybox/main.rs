@@ -90,6 +90,7 @@ fn deserialize_config() -> Result<Config> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
     let mut client = Client::new();
 
     let mut config = deserialize_config()?;
@@ -109,6 +110,8 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    println!("test");
 
     match cli.subcommand {
         Commands::Login(login) => run_login(&mut config, &mut client, login).await?,

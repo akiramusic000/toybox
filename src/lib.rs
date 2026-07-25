@@ -1,5 +1,8 @@
 use anyhow::{Result, bail};
-use reqwest::{Client as HttpClient, RequestBuilder, Response};
+use reqwest::{
+    Client as HttpClient, RequestBuilder, Response,
+    multipart::{Form, Part},
+};
 use serde::{Deserialize, Serialize};
 use serde_with::{NoneAsEmptyString, serde_as};
 use uuid::Uuid;
@@ -121,12 +124,10 @@ impl Client {
     }
 
     pub async fn is_logged_in(&mut self) -> Result<bool> {
-        let response = self
-            .client
-            .get(api_endpoint!("/auth/me"))
-            .load_auth(self)
-            .send()
-            .await?;
+        let request = self.client.get(api_endpoint!("/auth/me")).load_auth(self);
+        println!("{:?}", request);
+
+        let response = request.send().await?;
 
         Ok(response.status().is_success())
     }
@@ -151,13 +152,22 @@ impl Client {
     }
 
     pub async fn upload_game(&mut self, game: &Game) -> Result<Game> {
+        let mut game = game.clone();
+
         let request = if let Some(id) = game.id {
             self.client.put(api_endpoint!("/games/{id}"))
         } else {
             self.client.post(api_endpoint!("/games"))
         };
 
-        let response = request.load_auth(self).json(game).send().await?;
+        println!("{}", serde_json::to_string_pretty(&game)?);
+
+        game.id = None;
+        game.owner_id = None;
+        game.published = None;
+
+        let request = request.load_auth(self).json(&game);
+        let response = request.send().await?;
 
         let response = self.handle_error(response).await?;
         let game = response.json::<Game>().await?;
@@ -195,17 +205,18 @@ impl Client {
         }
     }
 
-    pub async fn upload_sprite(&mut self, image_data: Vec<u8>, mime_type: &str) -> Result<String> {
+    pub async fn upload_sprite(&mut self, image_data: Vec<u8>, filename: String) -> Result<String> {
         #[derive(Serialize, Deserialize)]
         struct UploadSpriteResponse {
+            #[serde(rename = "imagePath")]
             image_path: String,
         }
 
         let response = self
             .client
             .post(api_endpoint!("/assets/sprites"))
-            .body(image_data)
-            .header("Content-Type", mime_type)
+            .multipart(Form::new().part("file", Part::bytes(image_data).file_name(filename)))
+            .load_auth(self)
             .send()
             .await?;
         let response = self.handle_error(response).await?;
@@ -213,21 +224,52 @@ impl Client {
         let response = response.json::<UploadSpriteResponse>().await?;
         Ok(response.image_path)
     }
+
+    pub fn audio_path_to_url(url: &str) -> &str {
+        match url {
+            "test/ding.mp3" => "https://zublek.toybox.net/assets/ding-BloplqBE.mp3",
+            _ => url,
+        }
+    }
+
+    pub async fn upload_sound(&mut self, sound_data: Vec<u8>, filename: String) -> Result<String> {
+        #[derive(Serialize, Deserialize)]
+        struct UploadSoundResponse {
+            #[serde(rename = "audioPath")]
+            audio_path: String,
+        }
+
+        let response = self
+            .client
+            .post(api_endpoint!("/assets/audio"))
+            .multipart(Form::new().part("file", Part::bytes(sound_data).file_name(filename)))
+            .load_auth(self)
+            .send()
+            .await?;
+        let response = self.handle_error(response).await?;
+
+        let response = response.json::<UploadSoundResponse>().await?;
+        Ok(response.audio_path)
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "ownerId")]
     pub owner_id: Option<Uuid>,
     pub name: String,
     pub description: String,
     pub sprites: Vec<Sprite>,
+    pub sounds: Vec<Sound>,
     pub objects: Vec<Object>,
     pub rooms: Vec<Room>,
     #[serde(rename = "startingRoomId")]
     pub starting_room_id: Uuid,
-    pub published: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published: Option<bool>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plays: Option<u32>,
@@ -239,7 +281,7 @@ pub struct Game {
     pub liked: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sprite {
     pub id: Uuid,
     pub name: String,
@@ -247,8 +289,16 @@ pub struct Sprite {
     pub image_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Sound {
+    pub id: Uuid,
+    pub name: String,
+    #[serde(rename = "audioPath")]
+    pub audio_path: String,
+}
+
 #[serde_as]
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Object {
     pub id: Uuid,
     pub name: String,
@@ -258,7 +308,7 @@ pub struct Object {
     pub script: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Room {
     pub id: Uuid,
     pub name: String,
@@ -269,7 +319,7 @@ pub struct Room {
     pub objects: Vec<ObjectInstance>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectInstance {
     pub id: Uuid,
     #[serde(rename = "gameObjectId")]
@@ -278,7 +328,7 @@ pub struct ObjectInstance {
     pub y: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     username: String,
     user_id: Uuid,

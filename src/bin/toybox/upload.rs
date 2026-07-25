@@ -14,6 +14,7 @@ pub async fn run_upload(_: &mut Config, client: &mut Client) -> Result<()> {
     };
 
     let game = pack(&game_path, client).await?;
+    println!("{game:?}");
     let game = client.upload_game(&game).await?;
 
     let dot_toybox = game_path.join(".toybox");

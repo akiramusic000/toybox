@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Args;
-use toybox_rs::{Client, Game, Object, ObjectInstance, Room, Sprite};
+use toybox_rs::{Client, Game, Object, ObjectInstance, Room, Sound, Sprite};
 use uuid::Uuid;
 
 use crate::{Config, unpacked_repr::unpack};
@@ -17,6 +17,7 @@ pub struct New {
 pub async fn run_new(config: &mut Config, client: &mut Client, new: New) -> Result<()> {
     let New { path } = new;
     let sprite_id = Uuid::new_v4();
+    let sound_id = Uuid::new_v4();
     let obj_id = Uuid::new_v4();
     let room_id = Uuid::new_v4();
     let object_instance_id = Uuid::new_v4();
@@ -38,6 +39,11 @@ pub async fn run_new(config: &mut Config, client: &mut Client, new: New) -> Resu
                 sprite_id: Some(sprite_id),
                 script: DEFAULT_SCRIPT.to_string(),
             }],
+            sounds: vec![Sound {
+                id: sound_id,
+                name: String::from("Sound1"),
+                audio_path: "https://assets.toybox.zublek.net/audios/391479c2-14d8-432e-9a37-5d7cada78046.mp3".to_string(),
+            }],
             rooms: vec![Room {
                 id: room_id,
                 name: "Room 1".to_string(),
@@ -51,7 +57,7 @@ pub async fn run_new(config: &mut Config, client: &mut Client, new: New) -> Resu
                 }],
             }],
             starting_room_id: room_id,
-            published: false,
+            published: Some(false),
             plays: None,
             likes: None,
             liked: None,

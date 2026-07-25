@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use toybox_rs::{Client, Game, Object, ObjectInstance, Room, Sprite};
+use toybox_rs::{Client, Game, Object, ObjectInstance, Room, Sound, Sprite};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +63,7 @@ pub struct ToyboxConfig {
     pub objects: Vec<ObjectUnpacked>,
     pub rooms: Vec<RoomUnpacked>,
     pub sprites: Vec<SpriteUnpacked>,
+    pub sounds: Vec<SoundUnpacked>,
 }
 
 impl ToyboxConfig {
@@ -78,6 +79,20 @@ impl ToyboxConfig {
             .iter_mut()
             .find(|sprite| sprite.name.as_str() == name)
             .ok_or(anyhow!("Cannot find sprite {name} in sprite list!"))
+    }
+
+    pub fn lookup_sound<'a>(&'a self, name: &str) -> Result<&'a SoundUnpacked> {
+        self.sounds
+            .iter()
+            .find(|sound| sound.name.as_str() == name)
+            .ok_or(anyhow!("Cannot find sound {name} in sound list!"))
+    }
+
+    pub fn lookup_sound_mut<'a>(&'a mut self, name: &str) -> Result<&'a mut SoundUnpacked> {
+        self.sounds
+            .iter_mut()
+            .find(|sound| sound.name.as_str() == name)
+            .ok_or(anyhow!("Cannot find sound {name} in sound list!"))
     }
 
     pub fn lookup_object<'a>(&'a self, name: &str) -> Result<&'a ObjectUnpacked> {
@@ -145,12 +160,21 @@ pub struct SpriteUnpacked {
     pub md5: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SoundUnpacked {
+    pub name: String,
+    pub id: Uuid,
+    pub audio_path: String,
+    pub md5: String,
+}
+
 pub async fn pack<P: AsRef<Path>>(game_path: P, client: &mut Client) -> Result<Game> {
     let game_path = game_path.as_ref();
 
     let objects = game_path.join("objects");
     let rooms = game_path.join("rooms");
     let sprites = game_path.join("sprites");
+    let sounds = game_path.join("sounds");
 
     let mut toybox_config = ToyboxConfig::load_from_game_path(game_path)?;
     let game_config = GameConfig::load_from_game_path(game_path)?;
@@ -161,10 +185,11 @@ pub async fn pack<P: AsRef<Path>>(game_path: P, client: &mut Client) -> Result<G
         name: game_config.name.clone(),
         description: game_config.description.clone(),
         sprites: vec![],
+        sounds: vec![],
         objects: vec![],
         rooms: vec![],
         starting_room_id: Uuid::nil(),
-        published: game_config.published,
+        published: Some(game_config.published),
         plays: None,
         likes: None,
         liked: None,
@@ -174,19 +199,6 @@ pub async fn pack<P: AsRef<Path>>(game_path: P, client: &mut Client) -> Result<G
         let entry = entry?;
         let path = entry.path();
 
-        let mime_type = if let Some(ext) = path.extension() {
-            match ext.to_str() {
-                Some("png") => "image/png",
-                Some("jpg" | "jpeg") => "image/jpeg",
-                _ => {
-                    eprintln!("Unsupported sprite extension {}! skipping.", ext.display());
-                    continue;
-                }
-            }
-        } else {
-            continue;
-        };
-
         let image_data = fs::read(&path)?;
         let digest = md5::compute(&image_data);
         let md5 = format!("{digest:x}");
@@ -194,12 +206,22 @@ pub async fn pack<P: AsRef<Path>>(game_path: P, client: &mut Client) -> Result<G
 
         let sprite = if let Ok(sprite) = toybox_config.lookup_sprite_mut(&sprite_name) {
             if sprite.md5 != md5 {
-                sprite.image_path = client.upload_sprite(image_data, mime_type).await?;
+                sprite.image_path = client
+                    .upload_sprite(
+                        image_data,
+                        path.file_name().unwrap().to_string_lossy().to_string(),
+                    )
+                    .await?;
             }
 
             sprite
         } else {
-            let image_path = client.upload_sprite(image_data, mime_type).await?;
+            let image_path = client
+                .upload_sprite(
+                    image_data,
+                    path.file_name().unwrap().to_string_lossy().to_string(),
+                )
+                .await?;
 
             &*toybox_config.sprites.push_mut(SpriteUnpacked {
                 name: sprite_name,
@@ -213,6 +235,49 @@ pub async fn pack<P: AsRef<Path>>(game_path: P, client: &mut Client) -> Result<G
             id: sprite.id,
             name: sprite.name.clone(),
             image_path: sprite.image_path.clone(),
+        });
+    }
+
+    for entry in fs::read_dir(&sounds)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        let sound_data = fs::read(&path)?;
+        let digest = md5::compute(&sound_data);
+        let md5 = format!("{digest:x}");
+        let sound_name = path.file_stem().unwrap().to_string_lossy().to_string();
+
+        let sound = if let Ok(sound) = toybox_config.lookup_sound_mut(&sound_name) {
+            if sound.md5 != md5 {
+                sound.audio_path = client
+                    .upload_sound(
+                        sound_data,
+                        path.file_name().unwrap().to_string_lossy().to_string(),
+                    )
+                    .await?;
+            }
+
+            sound
+        } else {
+            let audio_path = client
+                .upload_sound(
+                    sound_data,
+                    path.file_name().unwrap().to_string_lossy().to_string(),
+                )
+                .await?;
+
+            &*toybox_config.sounds.push_mut(SoundUnpacked {
+                name: sound_name,
+                id: Uuid::new_v4(),
+                audio_path,
+                md5,
+            })
+        };
+
+        game.sounds.push(Sound {
+            id: sound.id,
+            name: sound.name.clone(),
+            audio_path: sound.audio_path.clone(),
         });
     }
 
@@ -313,11 +378,13 @@ pub async fn unpack<P: AsRef<Path>>(game_path: P, game: &Game, client: &mut Clie
     let objects = game_path.join("objects");
     let rooms = game_path.join("rooms");
     let sprites = game_path.join("sprites");
+    let sounds = game_path.join("sounds");
 
     fs::create_dir_all(&dot_toybox)?;
     fs::create_dir_all(&objects)?;
     fs::create_dir_all(&rooms)?;
     fs::create_dir_all(&sprites)?;
+    fs::create_dir_all(&sounds)?;
 
     let starting_room_index = game
         .rooms
@@ -328,7 +395,7 @@ pub async fn unpack<P: AsRef<Path>>(game_path: P, game: &Game, client: &mut Clie
         name: game.name.clone(),
         description: game.description.clone(),
         starting_room: game.rooms[starting_room_index].name.clone(),
-        published: game.published,
+        published: game.published.unwrap_or_default(),
     };
 
     config.save_to_game_path(game_path)?;
@@ -339,6 +406,7 @@ pub async fn unpack<P: AsRef<Path>>(game_path: P, game: &Game, client: &mut Clie
         objects: vec![],
         rooms: vec![],
         sprites: vec![],
+        sounds: vec![],
     };
 
     for room in &game.rooms {
@@ -416,10 +484,11 @@ pub async fn unpack<P: AsRef<Path>>(game_path: P, game: &Game, client: &mut Clie
     }
 
     for sprite in &game.sprites {
-        let sprite_path = sprites.join(&sprite.name).with_extension("png");
-        let sprite_data = client
-            .fetch_file(Client::sprite_path_to_url(&sprite.image_path))
-            .await?;
+        let url = Client::sprite_path_to_url(&sprite.image_path);
+        let sprite_path = sprites
+            .join(&sprite.name)
+            .with_extension(url.split(".").last().unwrap());
+        let sprite_data = client.fetch_file(url).await?;
         fs::write(&sprite_path, &sprite_data)?;
         let md5 = format!("{:x}", md5::compute(sprite_data));
 
@@ -427,6 +496,23 @@ pub async fn unpack<P: AsRef<Path>>(game_path: P, game: &Game, client: &mut Clie
             name: sprite.name.clone(),
             id: sprite.id,
             image_path: sprite.image_path.clone(),
+            md5,
+        });
+    }
+
+    for sound in &game.sounds {
+        let url = Client::audio_path_to_url(&sound.audio_path);
+        let sound_path = sounds
+            .join(&sound.name)
+            .with_extension(url.split(".").last().unwrap());
+        let sound_data = client.fetch_file(url).await?;
+        fs::write(&sound_path, &sound_data)?;
+        let md5 = format!("{:x}", md5::compute(sound_data));
+
+        toybox_config.sounds.push(SoundUnpacked {
+            name: sound.name.clone(),
+            id: sound.id,
+            audio_path: sound.audio_path.clone(),
             md5,
         });
     }
